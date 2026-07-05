@@ -101,7 +101,7 @@ def train_model(rnn_data, gnn_data, num_layers,
     os.makedirs(checkpoint_dir, exist_ok=True)
     checkpoint_path = os.path.join(checkpoint_dir, model_name)
 
-    train_dataset = SocNavHomoDataset(data_list_file = TRAIN_FILE, data_path = DATA_PATH, context_path = CONTEXT_FILE, timestamp_threshold = TIMESTAMP_THRESHOLD, reload = RELOAD, data_augmentation=DATA_AUGMENTATION)
+    train_dataset = SocNavHomoDataset(data_input = TRAIN_FILE, data_path = DATA_PATH, context_path = CONTEXT_FILE, timestamp_threshold = TIMESTAMP_THRESHOLD, reload = RELOAD, data_augmentation=DATA_AUGMENTATION)
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate, drop_last=False)
 
     gnn_input = len(train_dataset.all_features)
@@ -123,7 +123,7 @@ def train_model(rnn_data, gnn_data, num_layers,
     print("---------------------------------")
 
 
-    val_dataset = SocNavHomoDataset(data_list_file = DEV_FILE, data_path = DATA_PATH, context_path = CONTEXT_FILE, timestamp_threshold = TIMESTAMP_THRESHOLD, reload=RELOAD, data_augmentation=DATA_AUGMENTATION)
+    val_dataset = SocNavHomoDataset(data_input = DEV_FILE, data_path = DATA_PATH, context_path = CONTEXT_FILE, timestamp_threshold = TIMESTAMP_THRESHOLD, reload=RELOAD, data_augmentation=DATA_AUGMENTATION)
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, collate_fn = collate)
 
     model = HybridModel(num_layers, gnn_input=gnn_input, gnn_output = gnn_data['output'], rnn_hidden_channels= rnn_data['hidden_channels'], 
@@ -319,7 +319,7 @@ def train_model(rnn_data, gnn_data, num_layers,
 
 
 test_dataset = SocNavHomoDataset(
-    data_list_file=TEST_FILE, 
+    data_input=TEST_FILE, 
     data_path=DATA_PATH, 
     context_path=CONTEXT_FILE, 
     timestamp_threshold=TIMESTAMP_THRESHOLD,
@@ -353,7 +353,9 @@ def get_qual_loader(file_path):
     # context = {"urgency":98., "importance":98., "risk":95 , "distance_from_human":95., "minimum_speed":20, "average_speed":15., "maximum_speed":15.}
     for abbreviated_context, context in zip(ABBREVIATED_CONTEXTS, CONTEXTS):
         print(f"Creating q_test for: {context}")
-        qual_set = SocNavHomoDataset(data_list_file = file_path, data_path = Q_TEST_PATH, context_path = CONTEXT_FILE, overwrite_contexts=context, timestamp_threshold = TIMESTAMP_THRESHOLD)
+        print(file_path)
+        print(Q_TEST_PATH)
+        qual_set = SocNavHomoDataset(data_input = file_path, data_path = '.', context_path = CONTEXT_FILE, overwrite_contexts=context, timestamp_threshold = TIMESTAMP_THRESHOLD)
         qual_loader = DataLoader(qual_set, batch_size=BATCH_SIZE, shuffle=False, collate_fn=collate, drop_last=False)
         q_loaders.append((context, files, qual_loader, abbreviated_context))
     return q_loaders

@@ -1,12 +1,14 @@
 import os
 import sys
-# import json
+import json
 import torch
 import pandas as pd
 import numpy as np
 import math
 from pathlib import Path
 from torch_geometric.data import Dataset, Data, Batch
+from typing import List
+from tqdm import tqdm
 
 from data_conversions import clone_sequence, sequence_to_tensor
 from data_normalization import tensor_transform_to_goal_fr
@@ -15,6 +17,7 @@ import metrics
 class SocNavHomoDataset(Dataset):
     def __init__(self, data_input, data_path=None, context_path=None, overwrite_contexts=None, transform=None, pre_transform=None, pre_filter=None, timestamp_threshold=0.1, reload=False, data_augmentation=False):
         self.data_input = data_input
+        self.data_path = data_path
         self.MAX_TTC = 10
         self.metrics_features = ['dist_to_goal_pos', 'dist_to_goal_angle', 'success', 'hum_exists', 'wall_exist', 'dist_nearest_hum', 'dist_nearest_object', 
                                  'dist_wall', 'human_collision_flag', 'object_collision_flag', 'wall_collision_flag',
@@ -47,7 +50,8 @@ class SocNavHomoDataset(Dataset):
 
         self.init_data(data_input, data_path, context_path, overwrite_contexts, transform, pre_transform, pre_filter, timestamp_threshold, reload, data_augmentation)
 
-        self.process_structure(data_input)
+        self.process()
+        # self.process_structure(data_input)
 
 
     @property
@@ -83,15 +87,35 @@ class SocNavHomoDataset(Dataset):
         return self.root
 
     def process(self):
-        self.process_structure(self.data_input)
+        if isinstance(self.data_input, str):
+            with open(os.path.join(self.data_path, self.data_input), 'r') as f:
+                self.file_names = f.read().splitlines()
+        elif isinstance(self.data_input, list) and isinstance(self.data_input[0], str):
+            self.file_names = self.data_input
+        else:
+            self.file_names = []
+            self.process_structure(self.data_input)
+
+        cont = 0       
+        for raw_file in tqdm(self.file_names, total=len(self.file_names)):
+            with open(os.path.join(self.data_path, raw_file), 'r', encoding='utf-8') as f:
+                json_data = json.load(f)
+                self.process_structure(json_data)
+            cont+=1
+            if cont>5:
+                break
+
+        
+        
 
     def process_structure(self, json_data):
-        if 'context_description' in json_data.keys() and self.overwrite_contexts is not None:
+        if 'context_description' in json_data.keys() and self.overwrite_contexts is None:
             context_desc = json_data['context_description']
         elif self.overwrite_contexts is not None:
             context_desc = self.overwrite_contexts
         else:
             sys.exit(12)
+
         context = self.context_df.loc[context_desc.rstrip()].to_dict()
 
         walls = json_data.get('walls', [])
