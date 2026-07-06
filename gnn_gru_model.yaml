@@ -32,4 +32,4 @@ PROJECT_NAME: 'SN3-GNN'
 SEED: 123456
 
 Q_TEST_PATH: '../../../SocNavData2026/dataset/qualitative_tests'
-Q_TEST_FILE: '../../../SocNavData2026/dataset/qualitative_tests/socnavgym_conf_qualitative_one_static.yaml' 
+Q_TEST_FILE: 'socnavgym_conf_qualitative_one_static.yaml' 

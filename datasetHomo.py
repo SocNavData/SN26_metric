@@ -96,16 +96,11 @@ class SocNavHomoDataset(Dataset):
             self.file_names = []
             self.process_structure(self.data_input)
 
-        cont = 0       
         for raw_file in tqdm(self.file_names, total=len(self.file_names)):
             with open(os.path.join(self.data_path, raw_file), 'r', encoding='utf-8') as f:
                 json_data = json.load(f)
                 self.process_structure(json_data)
-            cont+=1
-            if cont>5:
-                break
-
-        
+      
         
 
     def process_structure(self, json_data):
