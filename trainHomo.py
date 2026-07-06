@@ -59,7 +59,7 @@ SEED = config_data["SEED"]
 
 qual_loaders = {}
 Q_TEST_PATH = config_data["Q_TEST_PATH"]
-config_qtest = yaml.load(open(config_data['Q_TEST_FILE'], "r"), Loader=yaml.Loader)
+config_qtest = yaml.load(open(os.path.join(Q_TEST_PATH, config_data['Q_TEST_FILE']), "r"), Loader=yaml.Loader)
 Q_FILES = config_qtest["FILES"]
 Q_NAMES = config_qtest["NAMES"]
 COLORS = config_qtest["COLORS"]
@@ -113,15 +113,6 @@ def train_model(rnn_data, gnn_data, num_layers,
     
     metrics_features = len(train_dataset.get_metrics_features())
 
-    # print(train_dataset.labels)
-    # ----------------------------------------
-    # for trajectories, test_labels, slengths in train_dataloader:
-    #     print("Muestra de etiquetas reales de tu dataset (primeros 10):", test_labels[:10].tolist())
-    #     print("Suma de etiquetas en este batch:", test_labels.sum().item())
-    #     print("Muestra de longitudes de secuencias (slengths):", slengths[:10].tolist())
-        # break # Solo miramos el primer batch para no saturar la consola
-    print("---------------------------------")
-
 
     val_dataset = SocNavHomoDataset(data_input = DEV_FILE, data_path = DATA_PATH, context_path = CONTEXT_FILE, timestamp_threshold = TIMESTAMP_THRESHOLD, reload=RELOAD, data_augmentation=DATA_AUGMENTATION)
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, collate_fn = collate)
@@ -140,7 +131,7 @@ def train_model(rnn_data, gnn_data, num_layers,
 
     min_val_loss = float('inf')
     best_epoch = 1
-    patience_counter = patience  # Using your global Patience variable
+    patience_counter = patience  
     train_losses, val_losses = [], []
 
     print(f"Starting training for {num_epochs} epochs (or until early stopping)")
@@ -348,14 +339,12 @@ rnn_data = {
 def get_qual_loader(file_path):
     # print(f"Processing file: {file_path}")
     q_loaders = []
-    with open(file_path) as set_file:
+    with open(os.path.join(Q_TEST_PATH,file_path)) as set_file:
         files = set_file.read().splitlines()
     # context = {"urgency":98., "importance":98., "risk":95 , "distance_from_human":95., "minimum_speed":20, "average_speed":15., "maximum_speed":15.}
     for abbreviated_context, context in zip(ABBREVIATED_CONTEXTS, CONTEXTS):
         print(f"Creating q_test for: {context}")
-        print(file_path)
-        print(Q_TEST_PATH)
-        qual_set = SocNavHomoDataset(data_input = file_path, data_path = '.', context_path = CONTEXT_FILE, overwrite_contexts=context, timestamp_threshold = TIMESTAMP_THRESHOLD)
+        qual_set = SocNavHomoDataset(data_input = file_path, data_path = Q_TEST_PATH, context_path = CONTEXT_FILE, overwrite_contexts=context, timestamp_threshold = TIMESTAMP_THRESHOLD)
         qual_loader = DataLoader(qual_set, batch_size=BATCH_SIZE, shuffle=False, collate_fn=collate, drop_last=False)
         q_loaders.append((context, files, qual_loader, abbreviated_context))
     return q_loaders
@@ -364,7 +353,7 @@ qual_loaders = {}
 for id, path in enumerate(Q_FILES):
     speed = Q_NAMES[id]
     print(f"Processing files with {speed}")
-    qual_loaders[speed] = get_qual_loader(os.path.join(Q_TEST_PATH,path))
+    qual_loaders[speed] = get_qual_loader(path)
 
 model, checkpoint = train_model(
     rnn_data=rnn_data, 
