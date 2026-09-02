@@ -13,7 +13,7 @@ import numpy as np
 
 from datasetHomo import SocNavHomoDataset, collate
 from modelHomo import HybridModel
-from utils import plot_qualitative_multiple
+from utils import plot_qualitative_multiple, plot_predictions_vs_expected
 
 CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_YAML = os.path.join(CURRENT_PATH, "train.yaml")
@@ -224,6 +224,36 @@ def train_model(rnn_data, gnn_data, num_layers,
             q_plt_buf.seek(0)
             q_plt_img = wandb.Image(Image.open(q_plt_buf))
         plt.close()
+
+        # Get Test Plots
+        preds = []
+        labels = []
+        # print("TESTLOADER LENGTH:", len(test_dataloader))
+        with torch.no_grad():
+            for trajectories, label, slengths in test_dataloader:
+                # print("TESTING")
+                trajectories = trajectories.to(device)
+                slengths = slengths.to(device)
+                outputs = model(trajectories, slengths)
+                preds.extend(outputs.squeeze().tolist())
+                labels.extend(label.squeeze().tolist())
+
+        # Second plot: Predictions vs Expected
+        plt.figure(figsize=(12, 6))  # Create a new figure with proper size
+        pve_plt = plot_predictions_vs_expected(preds, labels)
+        # Save a copy of the current figure for local storage
+        if SAVE_PLOTS_LOCALLY:
+            pve_plt_path = os.path.join(save_dir, f"pve_{epoch+1}.png")
+            pve_plt.savefig(pve_plt_path)
+
+        # Create a temporary buffer for wandb
+        if UPLOAD_TO_WANDB:
+            pve_plt_buf = io.BytesIO()
+            pve_plt.savefig(pve_plt_buf, format='png')
+            pve_plt_buf.seek(0)
+            pve_plt_img = wandb.Image(Image.open(pve_plt_buf))
+        plt.close()  # Close the figure
+
         
         val_loss /= len(val_dataset)
         val_losses.append(val_loss)
@@ -289,6 +319,7 @@ def train_model(rnn_data, gnn_data, num_layers,
                 "Qualitative_test": q_plt_img,
                 "min_val_loss": min_val_loss,
                 "best_epoch": best_epoch,
+                "Predicted_vs_Expected_ratings": pve_plt_img                
             })
         
 
