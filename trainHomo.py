@@ -230,13 +230,14 @@ def train_model(rnn_data, gnn_data, num_layers,
         labels = []
         # print("TESTLOADER LENGTH:", len(test_dataloader))
         with torch.no_grad():
-            for trajectories, label, slengths in test_dataloader:
-                # print("TESTING")
+            for trajectories, metrics, labels, slengths in test_dataloader:
                 trajectories = trajectories.to(device)
+                metrics = metrics.to(device)
+                labels = labels.to(device)
                 slengths = slengths.to(device)
-                outputs = model(trajectories, slengths)
+                outputs = model(trajectories, metrics, slengths)
                 preds.extend(outputs.squeeze().tolist())
-                labels.extend(label.squeeze().tolist())
+                labels.extend(labels.squeeze().tolist())
 
         # Second plot: Predictions vs Expected
         plt.figure(figsize=(12, 6))  # Create a new figure with proper size
