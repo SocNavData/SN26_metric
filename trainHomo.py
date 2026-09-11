@@ -45,6 +45,9 @@ GNN_OUTPUT = config_data["GNN_OUTPUT"]
 RNN_HIDDEN_SIZE = config_data["RNN_HIDDEN_SIZE"]
 LINEAR_LAYERS = config_data["LINEAR_LAYERS"]
 LOSS = config_data["LOSS"]
+WEIGHTED_LOSS = config_data["WEIGHTED_LOSS"]
+N_WEIGHT_GROUPS =  config_data["N_WEIGHT_GROUPS"]
+
 LR = config_data["LR"]
 MAX_EPOCHS = config_data["MAX_EPOCHS"]
 MAX_PATIENCE = config_data["MAX_PATIENCE"]
@@ -54,8 +57,10 @@ TIMESTAMP_THRESHOLD = config_data["TIMESTAMP_THRESHOLD"]
 
 SAVE_PLOTS_LOCALLY = config_data["SAVE_PLOTS_LOCALLY"]
 UPLOAD_TO_WANDB = config_data["UPLOAD_TO_WANDB"]
+WANDB_DESCRIPTION = config_data['WANDB_DESCRIPTION']
 PROJECT_NAME = config_data["PROJECT_NAME"]
 SEED = config_data["SEED"]
+DEVICE = config_data["DEVICE"]
 
 qual_loaders = {}
 Q_TEST_PATH = config_data["Q_TEST_PATH"]
@@ -68,7 +73,7 @@ ABBREVIATED_CONTEXTS = config_qtest["ABBREVIATED_CONTEXTS"]
 
 RELOAD = False
 
-device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
+device = torch.device(DEVICE)
 print("Using device:", device)
 
 SAVE_NAME = '_'.join(['GNN', RNN_TYPE, LOSS, str(NUM_LAYERS), str(LR)])
@@ -81,6 +86,8 @@ if UPLOAD_TO_WANDB is True:
     wandb.init(
         # Set the project where this run will be logged
         project=PROJECT_NAME,
+        # Run description
+        notes = WANDB_DESCRIPTION,
         # Track hyperparameters and run metadata
         config={
         "learning_rate": LR,
@@ -92,6 +99,18 @@ if UPLOAD_TO_WANDB is True:
 
 SAVE_NAME = SAVE_NAME if UPLOAD_TO_WANDB is False else wandb.run.name
 
+class WeightedHuberLoss(nn.Module):
+    def __init__(self, delta=1.):
+        super(WeightedHuberLoss, self).__init__()
+
+        self.huber = nn.HuberLoss(delta=delta, reduction = 'none')
+
+    def forward(self, pred, target, weights):
+        loss = self.huber(pred, target)
+
+        weighted_loss = loss * weights
+
+        return torch.mean(weighted_loss)
 
 def train_model(rnn_data, gnn_data, num_layers, 
                 batch_size=32, num_epochs=1000, patience =50, learning_rate=0.00005, 
@@ -101,7 +120,14 @@ def train_model(rnn_data, gnn_data, num_layers,
     os.makedirs(checkpoint_dir, exist_ok=True)
     checkpoint_path = os.path.join(checkpoint_dir, model_name)
 
-    train_dataset = SocNavHomoDataset(data_input = TRAIN_FILE, data_path = DATA_PATH, context_path = CONTEXT_FILE, timestamp_threshold = TIMESTAMP_THRESHOLD, reload = RELOAD, data_augmentation=DATA_AUGMENTATION)
+
+    if WEIGHTED_LOSS:
+        label_weights = None
+    else:
+        label_weights = torch.ones(N_WEIGHT_GROUPS, dtype=torch.float32)
+
+    train_dataset = SocNavHomoDataset(data_input = TRAIN_FILE, data_path = DATA_PATH, context_path = CONTEXT_FILE, timestamp_threshold = TIMESTAMP_THRESHOLD, 
+                                      reload = RELOAD, data_augmentation=DATA_AUGMENTATION, label_weights=label_weights, W_GROUPS=N_WEIGHT_GROUPS)
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate, drop_last=False)
 
     gnn_input = len(train_dataset.all_features)
@@ -114,7 +140,8 @@ def train_model(rnn_data, gnn_data, num_layers,
     metrics_features = len(train_dataset.get_metrics_features())
 
 
-    val_dataset = SocNavHomoDataset(data_input = DEV_FILE, data_path = DATA_PATH, context_path = CONTEXT_FILE, timestamp_threshold = TIMESTAMP_THRESHOLD, reload=RELOAD, data_augmentation=DATA_AUGMENTATION)
+    val_dataset = SocNavHomoDataset(data_input = DEV_FILE, data_path = DATA_PATH, context_path = CONTEXT_FILE, timestamp_threshold = TIMESTAMP_THRESHOLD, 
+                                    reload=RELOAD, data_augmentation=False, label_weights=train_dataset.label_weights)
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, collate_fn = collate)
 
     model = HybridModel(num_layers, gnn_input=gnn_input, gnn_output = gnn_data['output'], rnn_hidden_channels= rnn_data['hidden_channels'], 
@@ -124,9 +151,15 @@ def train_model(rnn_data, gnn_data, num_layers,
                         only_gnn = ONLY_GNN, only_metrics = ONLY_METRICS)
     model = model.to(device)
     if LOSS == "mse":
-        criterion = nn.MSELoss().to(device)
+        criterion = WeightedHuberLoss(delta=1.).to(device) #nn.MSELoss().to(device)
     elif LOSS == "bce":
         criterion = nn.BCELoss().to(device)
+    elif LOSS == "huber":
+        criterion = WeightedHuberLoss(delta=0.05).to(device)     
+
+    mse_function = torch.nn.MSELoss().to(device)
+    mae_function = torch.nn.L1Loss().to(device)
+
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     min_val_loss = float('inf')
@@ -142,14 +175,15 @@ def train_model(rnn_data, gnn_data, num_layers,
         model.train()
         epoch_loss = 0
 
-        for trajectories, metrics, labels, slengths in train_dataloader:
+        for trajectories, metrics, labels, slengths, weights in train_dataloader:
             trajectories = trajectories.to(device)
             metrics = metrics.to(device)
             labels = labels.to(device)
             slengths = slengths.to(device)
+            weights = weights.to(device)
             outputs = model(trajectories, metrics, slengths)
 
-            loss = criterion(outputs, labels)
+            loss = criterion(outputs, labels, weights)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -163,13 +197,14 @@ def train_model(rnn_data, gnn_data, num_layers,
         model.eval()
         val_loss = 0
         with torch.no_grad():
-            for trajectories, metrics, labels, slengths in val_dataloader:
+            for trajectories, metrics, labels, slengths, weights in val_dataloader:
                 trajectories = trajectories.to(device)
                 metrics = metrics.to(device)
                 labels = labels.to(device)
                 slengths = slengths.to(device)
+                weights = weights.to(device)
                 outputs = model(trajectories, metrics, slengths)
-                loss = criterion(outputs, labels)
+                loss = mse_function(outputs, labels)
                 val_loss += loss.item()*len(labels)
 
         full_preds = []
@@ -196,7 +231,7 @@ def train_model(rnn_data, gnn_data, num_layers,
                 # print(f"Context :{context}, files: {files}, qual_loader: {qual_loader}")
                 with torch.no_grad():
                     # print(f"======================\n{filename=}")
-                    for trajectories, metrics, _, slengths in qual_loader:
+                    for trajectories, metrics, _, slengths, _ in qual_loader:
                         # Pass the whole batched graph sequence to the model at once
                         trajectories = trajectories.to(device)
                         metrics = metrics.to(device)
@@ -228,16 +263,24 @@ def train_model(rnn_data, gnn_data, num_layers,
         # Get Test Plots
         preds = []
         labels = []
+        loss_mse = 0
+        loss_mae = 0
         # print("TESTLOADER LENGTH:", len(test_dataloader))
         with torch.no_grad():
-            for trajectories, metrics, lab, slengths in test_dataloader:
+            for trajectories, metrics, lab, slengths, _ in test_dataloader:
                 trajectories = trajectories.to(device)
                 metrics = metrics.to(device)
                 lab = lab.to(device)
                 slengths = slengths.to(device)
                 outputs = model(trajectories, metrics, slengths)
+                loss_mse += mse_function(outputs, lab).item() * lab.shape[0]
+                loss_mae += mae_function(outputs, lab).item() * lab.shape[0]
+
                 preds.extend(outputs.squeeze().tolist())
                 labels.extend(lab.squeeze().tolist())
+
+        loss_mse /= len(test_dataset)
+        loss_mae /= len(test_dataset)
 
         # Second plot: Predictions vs Expected
         plt.figure(figsize=(12, 6))  # Create a new figure with proper size
@@ -316,7 +359,8 @@ def train_model(rnn_data, gnn_data, num_layers,
             wandb.log({
                 "training_loss": train_loss,
                 "validation_loss": val_loss,
-                "lr": LR,
+                "test_mse": loss_mse,
+                "test_mae": loss_mae,                
                 "Qualitative_test": q_plt_img,
                 "min_val_loss": min_val_loss,
                 "best_epoch": best_epoch,
@@ -347,7 +391,7 @@ test_dataset = SocNavHomoDataset(
     context_path=CONTEXT_FILE, 
     timestamp_threshold=TIMESTAMP_THRESHOLD,
     reload = RELOAD,
-    data_augmentation=DATA_AUGMENTATION
+    data_augmentation=False
 )
 test_dataloader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate, drop_last=False)
 

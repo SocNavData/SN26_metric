@@ -100,7 +100,7 @@ class Reward(object):
         data_loader = DataLoader(dataset, batch_size=1, shuffle=False, collate_fn=collate)
         prediction = []
         with torch.no_grad():
-            for trajectories, metrics, labels, slengths in data_loader:
+            for trajectories, metrics, labels, slengths, _ in data_loader:
                 trajectories = trajectories.to(self.device)
                 metrics = metrics.to(self.device)
                 labels = labels.to(self.device)

@@ -14,8 +14,11 @@ from data_conversions import clone_sequence, sequence_to_tensor
 from data_normalization import tensor_transform_to_goal_fr
 import metrics
 
+
+
 class SocNavHomoDataset(Dataset):
-    def __init__(self, data_input, data_path=None, context_path=None, overwrite_contexts=None, transform=None, pre_transform=None, pre_filter=None, timestamp_threshold=0.1, reload=False, data_augmentation=False):
+    def __init__(self, data_input, data_path=None, context_path=None, overwrite_contexts=None, transform=None, pre_transform=None, pre_filter=None, 
+                 timestamp_threshold=0.1, reload=False, data_augmentation=False, label_weights = None, W_GROUPS = 20):
         self.data_input = data_input
         self.data_path = data_path
         self.MAX_TTC = 10
@@ -36,7 +39,12 @@ class SocNavHomoDataset(Dataset):
         self.graphs = []
         self.metrics = []        
         self.labels = []
+        self.label_range = []
         self.slengths = []
+
+        self.W_GROUPS = W_GROUPS
+        self.set_label_weights = label_weights
+        self.label_weights = [0]*self.W_GROUPS
 
 
         self.context_df = pd.read_csv(context_path, index_col='context')
@@ -96,12 +104,27 @@ class SocNavHomoDataset(Dataset):
             self.file_names = []
             self.process_structure(self.data_input)
 
+        ndata = 0
         for raw_file in tqdm(self.file_names, total=len(self.file_names)):
             with open(os.path.join(self.data_path, raw_file), 'r', encoding='utf-8') as f:
                 json_data = json.load(f)
                 self.process_structure(json_data)
-      
-        
+            ndata+=1
+            # if ndata>50:
+            #     break
+
+        # print('distribution', self.label_weights)
+        if self.set_label_weights is not None:
+            self.label_weights = self.set_label_weights
+        else:
+            self.label_weights = torch.tensor(self.label_weights, dtype = torch.float32)
+            proportion = self.label_weights/ndata
+            valid_ranges = (proportion>0).sum()
+            self.label_weights[proportion>0] = 1./(proportion[proportion>0]*valid_ranges)
+            self.label_weights = self.label_weights/torch.sum(self.label_weights)
+
+        # print('weights', self.label_weights)
+       
 
     def process_structure(self, json_data):
         if 'context_description' in json_data.keys() and self.overwrite_contexts is None:
@@ -138,6 +161,10 @@ class SocNavHomoDataset(Dataset):
         self.labels.append(torch.tensor([rating], dtype=torch.float32))
         self.slengths.append(torch.tensor(lenght, dtype=torch.long))
 
+        l_range = min(int(rating*100)//self.W_GROUPS, self.W_GROUPS-1)
+        self.label_range.append(l_range)
+        self.label_weights[l_range] += 1
+
         if self.data_augmentation:
             cloned_trajectory = clone_sequence(trayectoria)
             t_data_mirrored = self.mirror_sequence(cloned_trajectory)
@@ -145,6 +172,7 @@ class SocNavHomoDataset(Dataset):
             self.metrics.append(traj_metrics)
             self.labels.append(torch.tensor([rating], dtype=torch.float32))
             self.slengths.append(torch.tensor(lenght, dtype=torch.long))
+            self.label_range.append(l_range)
 
 
     def get_all_features(self):
@@ -164,8 +192,9 @@ class SocNavHomoDataset(Dataset):
         metrics = self.metrics[idx]
         label = self.labels[idx] 
         slength = self.slengths[idx] 
+        weight = self.label_weights[self.label_range[idx]]
 
-        return data, metrics, label, slength
+        return data, metrics, label, slength, weight
 
 
     
@@ -457,7 +486,7 @@ class SocNavHomoDataset(Dataset):
 
 
 def collate(batch):
-    sequences, metrics, labels, sequence_lengths = zip(*batch)  
+    sequences, metrics, labels, sequence_lengths, weights = zip(*batch)  
 
     flat_graphs = [frame for traj in sequences for frame in traj]
 
@@ -466,6 +495,7 @@ def collate(batch):
     metrics_tensor = torch.cat(metrics, dim=0)  
     labels_tensor = torch.stack(labels)  
     slengths_tensor = torch.stack(sequence_lengths)
+    weights_tensor = torch.stack(weights)
 
 
-    return batched_graphs, metrics_tensor, labels_tensor, slengths_tensor
+    return batched_graphs, metrics_tensor, labels_tensor, slengths_tensor, weights_tensor
