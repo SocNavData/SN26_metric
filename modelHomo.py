@@ -1,29 +1,8 @@
 import torch
 import torch.nn as nn
 from torch.nn.functional import leaky_relu
-from torch_geometric.nn import GATConv, Linear, to_hetero
-
-class GAT(torch.nn.Module):
-    def __init__(self, hidden_channels, out_channels):
-        super().__init__()
-        # self.conv1 = GATConv((-1, -1), hidden_channels, add_self_loops=False)
-        self.conv1 = GATConv((-1, -1), hidden_channels, heads=8, concat=False, add_self_loops=False)
-        self.linear1 = Linear(-1, hidden_channels)
-        # self.conv2 = GATConv((-1, -1), out_channels, add_self_loops=False)
-        self.conv2 = GATConv((-1, -1), hidden_channels, heads=8, concat=False, add_self_loops=False)
-        self.linear2 = Linear(-1, hidden_channels)
-
-        self.conv3 = GATConv((-1, -1), out_channels, heads=8, concat=False, add_self_loops=False)
-        self.linear3 = Linear(-1, out_channels)
-
-    def forward(self, x, edge_index):
-        x = self.conv1(x, edge_index) + self.linear1(x)
-        x = leaky_relu(x)
-        x = self.conv2(x, edge_index) + self.linear2(x)
-        x = leaky_relu(x)
-        x = self.conv3(x, edge_index) + self.linear3(x)
-        return x
-
+from torch_geometric.nn import GATConv, Linear
+from transformer_block import TransformerBlock
 
 class GNNModel(nn.Module):
     def __init__(self, gnn_input_channels, gnn_hidden_channels, gnn_heads, gnn_output, gnn_concat):
@@ -59,6 +38,23 @@ class GNNModel(nn.Module):
                 x = leaky_relu(x, negative_slope=0.1)
         return x
 
+class RNNModel(nn.Module):
+    def __init__(self, rnn_type, rnn_input, rnn_hidden_channels, num_layers, batch_first, dropout):
+        super(RNNModel,self).__init__()
+
+        if rnn_type == 'GRU':
+            self.rnn_block = nn.GRU(rnn_input, rnn_hidden_channels, num_layers, batch_first=batch_first, dropout=dropout)
+        elif rnn_type=='LSTM':
+            self.rnn_block = nn.LSTM(rnn_input, rnn_hidden_channels, num_layers, batch_first=batch_first, dropout=dropout)
+        else:
+            print(f'{rnn_type} is not a valid RNN type')
+            exit()
+
+    def forward(self, x, x_len):
+        rnn_output, _ = self.rnn_block(x)
+        out = rnn_output[torch.arange(rnn_output.shape[0]), x_len - 1]
+        return out
+
 class HybridModel(nn.Module):
     def __init__(self, num_layers, gnn_input, gnn_output, rnn_hidden_channels, gnn_hidden_channels, rnn_type, gnn_heads, gnn_concat, 
                  linear_layers=[], rnn_activation = 'linear', context_vars = 0, metrics_vars = 0, rnn_dropout = 0.0, only_gnn = False, only_metrics = False):
@@ -72,7 +68,6 @@ class HybridModel(nn.Module):
         self.metrics_vars = metrics_vars
         self.scenario_vars = context_vars+metrics_vars
 
-        # self.gnn_block = GAT(gnn_hidden_channels[0], gnn_output)
         self.gnn_block = GNNModel(gnn_input, gnn_hidden_channels, gnn_heads, gnn_output, gnn_concat)
         
         self.contextNorm = nn.LayerNorm(self.context_vars)
@@ -81,31 +76,23 @@ class HybridModel(nn.Module):
             self.metricsNorm = nn.LayerNorm(self.metrics_vars)
         if not self.only_metrics:
             self.gnnNorm = nn.LayerNorm(gnn_output)
-        # self.metricsNorm = nn.LayerNorm(self.context_vars)
 
-        self.defineRnnBlock(rnn_type, rnn_hidden_channels, linear_layers, rnn_activation, rnn_dropout)
+        self.defineSeqBlock(rnn_type, rnn_hidden_channels, linear_layers, rnn_activation, rnn_dropout)
 
-        # self.rnnNorm = nn.LayerNorm(rnn_hidden_channels)
-        # self.contextNorm = nn.LayerNorm(self.context_vars)
+    def defineSeqBlock(self, rnn_type, rnn_hidden_channels, linear_layers, rnn_activation, rnn_dropout):
 
+        if self.only_metrics:
+            input_vars = self.scenario_vars
+        elif self.only_gnn:
+            input_vars = self.gnn_output+self.context_vars
+        else:
+            input_vars = self.gnn_output+self.scenario_vars
 
-    def defineRnnBlock(self, rnn_type, rnn_hidden_channels, linear_layers, rnn_activation, rnn_dropout):
-        if rnn_type == "GRU":
-            if self.only_metrics:
-                self.rnn_layer = nn.GRU(self.scenario_vars, rnn_hidden_channels, self.num_layers, batch_first=True, dropout=rnn_dropout)
-            elif self.only_gnn:
-                # self.rnn_layer = nn.GRU(self.gnn_output, rnn_hidden_channels, self.num_layers, batch_first=True, dropout=rnn_dropout)
-                self.rnn_layer = nn.GRU(self.gnn_output+self.context_vars, rnn_hidden_channels, self.num_layers, batch_first=True, dropout=rnn_dropout)
-            else:
-                self.rnn_layer = nn.GRU(self.gnn_output+self.scenario_vars, rnn_hidden_channels, self.num_layers, batch_first=True, dropout=rnn_dropout)
+        if rnn_type=='GRU' or rnn_type=='LSTM':
+            self.seq_block = RNNModel(rnn_type, input_vars, rnn_hidden_channels, self.num_layers, batch_first=True, dropout=rnn_dropout)
+        elif rnn_type=='Transformer':
+            self.seq_block = TransformerBlock(input_vars)
 
-            # self.rnn_layer = nn.GRU(self.gnn_output+self.context_vars, rnn_hidden_channels, self.num_layers, batch_first=True, dropout=rnn_dropout)
-            # self.rnn_layer = nn.GRU(self.scenario_vars, rnn_hidden_channels, self.num_layers, batch_first=True, dropout=rnn_dropout)
-            
-        elif rnn_type == "LSTM":
-            self.rnn_layer = nn.LSTM(self.gnn_output+self.scenario_vars, rnn_hidden_channels, self.num_layers,
-                                batch_first=True, dropout = rnn_dropout)
-            
         self.fc_layers = nn.ModuleList()
         linear_size = rnn_hidden_channels+self.context_vars
         for l in linear_layers:
@@ -158,19 +145,8 @@ class HybridModel(nn.Module):
             metrics_seq_norm = self.metricsNorm(metrics_seq)
             x_seq = torch.cat((x_seq, metrics_seq_norm, context_seq_norm), dim=2)
 
-        # elif self.only_gnn:
-        #     metrics_seq = metrics_seq[:,:,-self.context_vars:] #without metrics
-        #     # x_seq = torch.cat((x_seq, metrics_seq), dim=2)
-        # else:
-        #     metrics_seq_norm = self.metricsNorm(metrics_seq)
-        #     x_seq = torch.cat((x_seq, metrics_seq_norm), dim=2)
 
-        rnn_output, _ = self.rnn_layer(x_seq)
-        # rnn_output, _ = self.rnn_layer(metrics_seq_norm) #only metrics
-
-        out = rnn_output[torch.arange(rnn_output.shape[0]), slengths - 1]
-
-        # out = self.rnnNorm(out)
+        out = self.seq_block(x_seq, slengths)
 
         if self.context_vars > 0:
             batch_context = context_seq[:, 0, :]
