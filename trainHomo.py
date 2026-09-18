@@ -141,7 +141,7 @@ def train_model(rnn_data, gnn_data, num_layers,
 
 
     val_dataset = SocNavHomoDataset(data_input = DEV_FILE, data_path = DATA_PATH, context_path = CONTEXT_FILE, timestamp_threshold = TIMESTAMP_THRESHOLD, 
-                                    reload=RELOAD, data_augmentation=False, label_weights=train_dataset.label_weights)
+                                    reload=RELOAD, data_augmentation=False, label_weights=train_dataset.label_weights, W_GROUPS=N_WEIGHT_GROUPS)
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, collate_fn = collate)
 
     model = HybridModel(num_layers, gnn_input=gnn_input, gnn_output = gnn_data['output'], rnn_hidden_channels= rnn_data['hidden_channels'], 

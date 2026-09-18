@@ -91,7 +91,7 @@ class HybridModel(nn.Module):
         if rnn_type=='GRU' or rnn_type=='LSTM':
             self.seq_block = RNNModel(rnn_type, input_vars, rnn_hidden_channels, self.num_layers, batch_first=True, dropout=rnn_dropout)
         elif rnn_type=='Transformer':
-            self.seq_block = TransformerBlock(input_vars)
+            self.seq_block = TransformerBlock(input_vars, d_model=rnn_hidden_channels)
 
         self.fc_layers = nn.ModuleList()
         linear_size = rnn_hidden_channels+self.context_vars
